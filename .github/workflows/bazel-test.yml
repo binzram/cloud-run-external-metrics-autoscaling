@@ -1,0 +1,40 @@
+# Runs the scaler tests for fix/record-scale-up-from-zero. Lives on its own branch so the
+# PR branch stays clean.
+name: bazel-test
+
+on:
+  push:
+    branches: [ci/bazel-test]
+  workflow_dispatch:
+
+jobs:
+  with-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lay out the workspace like the Dockerfile does
+        run: cp -r proto scaler/proto
+      - name: bazel test (all scaler tests)
+        working-directory: scaler
+        run: bazel test //src/test/... --test_output=errors
+
+  # The new test must fail on the code before the fix.
+  without-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Revert the fix, keep the new test
+        run: |
+          git fetch --depth 1 origin 953081aff6f4f519f050d6d9424ecf906ce15c84
+          git checkout 953081aff6f4f519f050d6d9424ecf906ce15c84 -- \
+            scaler/src/main/java/com/google/cloud/run/crema/ScalingStabilizer.java
+          cp -r proto scaler/proto
+      - name: bazel test (expected to fail)
+        working-directory: scaler
+        run: |
+          if bazel test //src/test/java/com/google/cloud/run/crema:ScalingStabilizerTest --test_output=errors; then
+            echo "::error::ScalingStabilizerTest passed without the fix"
+            exit 1
+          fi
+          grep -q "scaleUpFromZero_countsTowardScaleDownStabilization" \
+            bazel-testlogs/src/test/java/com/google/cloud/run/crema/ScalingStabilizerTest/test.log
